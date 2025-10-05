@@ -17,10 +17,10 @@ SRC_DIR = PROJECT_ROOT / "src"
 
 # Database configuration
 DB_CONFIG = {
-    "type": os.getenv("DB_TYPE", "sqlite"),
+    "type": os.getenv("DB_TYPE", "sqlite"),  # Cambiado a SQLite por defecto
     "host": os.getenv("DB_HOST", "localhost"),
     "port": int(os.getenv("DB_PORT", "5432")),
-    "name": os.getenv("DB_NAME", "properati_analysis.db"),
+    "name": os.getenv("DB_NAME", "properati_analysis.db"),  # Archivo SQLite
     "user": os.getenv("DB_USER", ""),
     "password": os.getenv("DB_PASSWORD", "")
 }
@@ -31,6 +31,12 @@ MODEL_CONFIG = {
     "random_state": 42,
     "cv_folds": 5,
     "target_column": "price_usd"
+}
+
+# Kaggle configuration
+KAGGLE_CONFIG = {
+    "username": os.getenv("KAGGLE_USERNAME", ""),
+    "key": os.getenv("KAGGLE_KEY", "")
 }
 
 # Create directories if they don't exist
