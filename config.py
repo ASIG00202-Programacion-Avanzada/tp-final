@@ -39,6 +39,6 @@ KAGGLE_CONFIG = {
     "key": os.getenv("KAGGLE_KEY", "")
 }
 
-# Create directories if they don't exist
+# Creando directorios si no existen
 for directory in [DATA_DIR, RAW_DATA_DIR, PROCESSED_DATA_DIR, EXTERNAL_DATA_DIR, REPORTS_DIR]:
     directory.mkdir(exist_ok=True)

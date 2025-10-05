@@ -49,11 +49,17 @@ class ProperatiAnalysisPipeline:
         
     def download_data(self, kaggle_dataset: str = "alejandroczernikier/properati-argentina-dataset"):
         """
-        Descarga el dataset de Kaggle.
+        Verifica si el dataset ya existe o descarga desde Kaggle.
         
         Args:
             kaggle_dataset: Nombre del dataset en Kaggle
         """
+        # Verificar si ya existe el dataset
+        csv_files = list(RAW_DATA_DIR.glob("*.csv"))
+        if csv_files:
+            logger.info(f"Dataset ya existe: {csv_files[0].name}")
+            return True
+        
         try:
             import kaggle
             from kaggle.api.kaggle_api_extended import KaggleApi

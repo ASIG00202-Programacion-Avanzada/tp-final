@@ -55,7 +55,7 @@ tp-final/
 ### 1. Clonar el Repositorio
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/ASIG00202-Programacion-Avanzada/tp-final
 cd tp-final
 ```
 
@@ -97,12 +97,58 @@ DB_CONFIG = {
 
 ## Uso del Proyecto
 
-### Opción 1: Pipeline Completo Automático
+### **Ejecución Rápida del Proyecto**
+
+#### **Paso 1: Preparar el Dataset**
+```bash
+# Colocar el archivo CSV en la carpeta data/raw/
+# El archivo debe llamarse: properati_dataset.csv
+```
+
+#### **Paso 2: Configurar Entorno**
+```bash
+# Crear entorno virtual
+python3 -m venv venv
+
+# Activar entorno virtual
+source venv/bin/activate  # En Linux
+
+venv\Scripts\activate     # En Windows
+
+# Instalar dependencias
+pip install -r requirements.txt
+```
+
+#### **Paso 3: Ejecutar Análisis**
+```bash
+# Análisis completo con visualizaciones
+python robust_analysis.py
+
+# análisis básico
+python simple_analysis.py
+```
+
+#### **Paso 4: Ver Resultados**
+```bash
+# Los resultados se guardan en:
+# - reports/analysis_results.png (gráficos)
+# - reports/analysis_summary.md (resumen)
+```
+
+### **¿Qué hace el análisis?**
+
+1. **Carga** el dataset de Properati (muestra de 30,000 registros)
+2. **Limpia** los datos (elimina outliers, valores faltantes)
+3. **Crea características** (precio por m², total de habitaciones, etc.)
+4. **Entrena modelos** (Linear Regression, Random Forest)
+5. **Evalúa** con métricas (R², RMSE, MAE)
+6. **Genera visualizaciones** automáticamente
+
+### **Configuración Avanzada (Opcional)**
+
+Si quieres usar el pipeline completo:
 
 ```bash
-# Descargar datos
-python scripts/download_data.py
-
 # Configurar base de datos
 python scripts/setup_database.py
 
@@ -110,30 +156,7 @@ python scripts/setup_database.py
 python scripts/main_pipeline.py
 ```
 
-### Opción 2: Uso Paso a Paso
 
-```python
-# 1. Explorar datos
-jupyter notebook notebooks/01_data_exploration.ipynb
-
-# 2. Procesar datos
-from src.data_processing import DataProcessor
-processor = DataProcessor()
-df = processor.load_data("data/raw/dataset.csv")
-X_train, X_test, y_train, y_test, preprocessor = processor.process_pipeline(df)
-
-# 3. Entrenar modelos
-from src.models import ModelTrainer
-trainer = ModelTrainer()
-results = trainer.compare_models(X_train, y_train, X_test, y_test)
-
-# 4. Crear visualizaciones
-from src.visualization import VisualizationManager
-viz = VisualizationManager()
-viz.plot_model_comparison(results)
-```
-
----
 
 ## Algoritmos Implementados
 
