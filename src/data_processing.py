@@ -168,3 +168,94 @@ class DataProcessor:
         logger.info("Feature engineering completado")
         return df_features
     
+    def prepare_preprocessor(self, df, target_column='price_usd'):
+        """
+        Prepara el preprocesador para las características.
+        
+        Args:
+            df (pd.DataFrame): Dataset
+            target_column (str): Nombre de la columna objetivo
+            
+        Returns:
+            ColumnTransformer: Preprocesador configurado
+        """
+        from sklearn.preprocessing import OneHotEncoder
+        
+        # Separar características numéricas y categóricas
+        numeric_features = df.select_dtypes(include=[np.number]).columns.tolist()
+        if target_column in numeric_features:
+            numeric_features.remove(target_column)
+        
+        categorical_features = df.select_dtypes(include=['object']).columns.tolist()
+        
+        # Pipeline para características numéricas
+        numeric_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler())
+        ])
+        
+        # Pipeline para características categóricas
+        categorical_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='most_frequent')),
+            ('onehot', OneHotEncoder(handle_unknown='ignore'))
+        ])
+        
+        # Combinar preprocesadores
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', numeric_transformer, numeric_features),
+                ('cat', categorical_transformer, categorical_features)
+            ]
+        )
+        
+        self.preprocessor = preprocessor
+        logger.info("Preprocesador configurado")
+        return preprocessor
+    
+    def split_data(self, df, target_column='price_usd', test_size=0.2, random_state=42):
+        """
+        Divide los datos en conjuntos de entrenamiento y prueba.
+        
+        Args:
+            df (pd.DataFrame): Dataset
+            target_column (str): Columna objetivo
+            test_size (float): Proporción del conjunto de prueba
+            random_state (int): Semilla para reproducibilidad
+            
+        Returns:
+            tuple: X_train, X_test, y_train, y_test
+        """
+        X = df.drop(columns=[target_column])
+        y = df[target_column]
+        
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=random_state
+        )
+        
+        logger.info(f"Datos divididos. Train: {X_train.shape}, Test: {X_test.shape}")
+        return X_train, X_test, y_train, y_test
+    
+    def process_pipeline(self, df, target_column='price_usd'):
+        """
+        Pipeline completo de procesamiento de datos.
+        
+        Args:
+            df (pd.DataFrame): Dataset original
+            target_column (str): Columna objetivo
+            
+        Returns:
+            tuple: X_train, X_test, y_train, y_test, preprocessor
+        """
+        # Limpiar datos
+        df_clean = self.clean_data(df)
+        
+        # Crear características
+        df_features = self.create_features(df_clean)
+        
+        # Preparar preprocesador
+        preprocessor = self.prepare_preprocessor(df_features, target_column)
+        
+        # Dividir datos
+        X_train, X_test, y_train, y_test = self.split_data(df_features, target_column)
+        
+        return X_train, X_test, y_train, y_test, preprocessor
