@@ -111,3 +111,38 @@ class DataProcessor:
         
         logger.info(f"Datos limpiados. Shape original: {df.shape}, Shape final: {df_clean.shape}")
         return df_clean
+    
+    def create_features(self, df):
+        """
+        Crea nuevas características (feature engineering).
+        
+        Args:
+            df (pd.DataFrame): Dataset original
+            
+        Returns:
+            pd.DataFrame: Dataset con nuevas características
+        """
+        df_features = df.copy()
+        
+        # Crear ratio superficie cubierta/total
+        if 'surface_covered' in df_features.columns and 'surface_total' in df_features.columns:
+            df_features['surface_ratio'] = df_features['surface_covered'] / df_features['surface_total']
+            df_features['surface_ratio'] = df_features['surface_ratio'].fillna(1)
+            df_features['surface_ratio'] = df_features['surface_ratio'].replace([np.inf, -np.inf], 1)
+        
+        # Crear precio por metro cuadrado
+        if 'price_usd' in df_features.columns and 'surface_total' in df_features.columns:
+            df_features['price_per_sqm'] = df_features['price_usd'] / df_features['surface_total']
+            df_features['price_per_sqm'] = df_features['price_per_sqm'].replace([np.inf, -np.inf], np.nan)
+        
+        # Crear total de habitaciones
+        if 'bedrooms' in df_features.columns and 'bathrooms' in df_features.columns:
+            df_features['total_rooms'] = df_features['bedrooms'] + df_features['bathrooms']
+        
+        # Crear densidad de habitaciones
+        if 'rooms' in df_features.columns and 'surface_total' in df_features.columns:
+            df_features['room_density'] = df_features['rooms'] / df_features['surface_total']
+            df_features['room_density'] = df_features['room_density'].replace([np.inf, -np.inf], np.nan)
+        
+        logger.info("Feature engineering completado")
+        return df_features
