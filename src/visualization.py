@@ -362,3 +362,78 @@ def plot_correlation_matrix(self, df, numeric_cols, save_path=None):
         
         self.figures['feature_importance'] = plt.gcf()
         return plt.gcf()
+
+    def create_interactive_dashboard(self, df, price_col='price_usd'):
+        """
+        Crea un dashboard interactivo con Plotly.
+        
+        Args:
+            df: DataFrame con los datos
+            price_col: Columna de precios
+        """
+        # Crear subplots
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=('Distribución de Precios', 'Precio por Ubicación', 
+                           'Precio por Tipo de Propiedad', 'Superficie vs Precio'),
+            specs=[[{"type": "histogram"}, {"type": "bar"}],
+                   [{"type": "box"}, {"type": "scatter"}]]
+        )
+        
+        # Histograma de precios
+        fig.add_trace(
+            go.Histogram(x=df[price_col], name='Precios'),
+            row=1, col=1
+        )
+        
+        # Precio por ubicación (top 10)
+        if 'location' in df.columns:
+            price_by_location = df.groupby('location')[price_col].mean().sort_values(ascending=False).head(10)
+            fig.add_trace(
+                go.Bar(x=price_by_location.index, y=price_by_location.values, name='Precio por Ubicación'),
+                row=1, col=2
+            )
+        
+        # Box plot por tipo de propiedad
+        if 'property_type' in df.columns:
+            for prop_type in df['property_type'].unique()[:5]:  # Top 5 tipos
+                data = df[df['property_type'] == prop_type][price_col]
+                fig.add_trace(
+                    go.Box(y=data, name=prop_type),
+                    row=2, col=1
+                )
+        
+        # Scatter plot superficie vs precio
+        if 'surface_total' in df.columns:
+            sample_df = df.sample(n=min(2000, len(df)))
+            fig.add_trace(
+                    go.Scatter(x=sample_df['surface_total'], y=sample_df[price_col], 
+                             mode='markers', name='Superficie vs Precio'),
+                    row=2, col=2
+                )
+        
+        fig.update_layout(height=800, showlegend=True, title_text="Dashboard Interactivo - Properati Argentina")
+        
+        return fig
+    
+    def save_all_figures(self, output_dir):
+        """
+        Guarda todas las figuras generadas.
+        
+        Args:
+            output_dir: Directorio donde guardar las figuras
+        """
+        output_path = Path(output_dir)
+        output_path.mkdir(exist_ok=True)
+        
+        for name, fig in self.figures.items():
+            file_path = output_path / f"{name}.png"
+            fig.savefig(file_path, dpi=300, bbox_inches='tight')
+            logger.info(f"Figura guardada: {file_path}")
+    
+    def close_all_figures(self):
+        """
+        Cierra todas las figuras abiertas.
+        """
+        plt.close('all')
+        logger.info("Todas las figuras cerradas")
