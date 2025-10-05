@@ -212,7 +212,192 @@ class ProperatiAnalysisPipeline:
         
         return results
     
+    def evaluate_models(self, model_results):
+        """
+        Evalúa los modelos y genera métricas detalladas.
+        
+        Args:
+            model_results: Resultados de los modelos
+            
+        Returns:
+            dict: Métricas de evaluación
+        """
+        logger.info("Evaluando modelos...")
+        
+        evaluation_metrics = {}
+        
+        for model_name, results in model_results.items():
+            metrics = {
+                'test_rmse': results['test_rmse'],
+                'test_mae': results['test_mae'],
+                'test_r2': results['test_r2'],
+                'cv_rmse_mean': results['cv_mean'],
+                'cv_rmse_std': results['cv_std']
+            }
+            
+            evaluation_metrics[model_name] = metrics
+            
+            # Guardar en base de datos
+            self.db_manager.store_model_results(
+                model_name=model_name,
+                model_version="1.0",
+                metrics=metrics,
+                hyperparameters={},
+                feature_importance=None
+            )
+        
+        return evaluation_metrics
+    
+    def create_visualizations(self, processed_data, model_results):
+        """
+        Crea visualizaciones de los resultados.
+        
+        Args:
+            processed_data: Datos preprocesados
+            model_results: Resultados de los modelos
+        """
+        logger.info("Creando visualizaciones...")
+        
+        # Configurar estilo
+        plt.style.use('seaborn-v0_8')
+        sns.set_palette("husl")
+        
+        # 1. Comparación de modelos
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        
+        # Métricas de comparación
+        model_names = list(model_results.keys())
+        rmse_scores = [results['test_rmse'] for results in model_results.values()]
+        r2_scores = [results['test_r2'] for results in model_results.values()]
+        
+        # RMSE por modelo
+        axes[0, 0].bar(model_names, rmse_scores)
+        axes[0, 0].set_title('RMSE por Modelo')
+        axes[0, 0].set_ylabel('RMSE')
+        axes[0, 0].tick_params(axis='x', rotation=45)
+        
+        # R² por modelo
+        axes[0, 1].bar(model_names, r2_scores)
+        axes[0, 1].set_title('R² por Modelo')
+        axes[0, 1].set_ylabel('R²')
+        axes[0, 1].tick_params(axis='x', rotation=45)
+        
+        # Predicciones vs Valores reales (mejor modelo)
+        best_model_name = max(model_results.keys(), key=lambda x: model_results[x]['test_r2'])
+        best_results = model_results[best_model_name]
+        
+        y_test = processed_data['y_test']
+        y_pred = best_results['predictions']['test']
+        
+        axes[1, 0].scatter(y_test, y_pred, alpha=0.6)
+        axes[1, 0].plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
+        axes[1, 0].set_xlabel('Valores Reales')
+        axes[1, 0].set_ylabel('Predicciones')
+        axes[1, 0].set_title(f'Predicciones vs Reales - {best_model_name}')
+        
+        # Distribución de errores
+        errors = y_test - y_pred
+        axes[1, 1].hist(errors, bins=30, alpha=0.7)
+        axes[1, 1].set_xlabel('Error de Predicción')
+        axes[1, 1].set_ylabel('Frecuencia')
+        axes[1, 1].set_title('Distribución de Errores')
+        
+        plt.tight_layout()
+        plt.savefig(REPORTS_DIR / 'model_comparison.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # 2. Feature importance (si está disponible)
+        if hasattr(best_results['model'], 'feature_importances_'):
+            feature_importance = best_results['model'].feature_importances_
+            feature_names = processed_data['feature_names']
+            
+            # Crear DataFrame para feature importance
+            importance_df = pd.DataFrame({
+                'feature': feature_names,
+                'importance': feature_importance
+            }).sort_values('importance', ascending=False)
+            
+            # Plot feature importance
+            plt.figure(figsize=(10, 8))
+            sns.barplot(data=importance_df.head(15), x='importance', y='feature')
+            plt.title(f'Feature Importance - {best_model_name}')
+            plt.xlabel('Importance')
+            plt.tight_layout()
+            plt.savefig(REPORTS_DIR / 'feature_importance.png', dpi=300, bbox_inches='tight')
+            plt.close()
+        
+        logger.info("Visualizaciones guardadas en reports/")
+    
+    def generate_report(self, model_results, evaluation_metrics):
+        """
+        Genera un reporte final del análisis.
+        
+        Args:
+            model_results: Resultados de los modelos
+            evaluation_metrics: Métricas de evaluación
+        """
+        logger.info("Generando reporte final...")
+        
+        # Crear reporte en Markdown
+        report_content = f"""
+# Reporte de Análisis de Precios de Propiedades - Properati Argentina
 
+## Resumen Ejecutivo
+
+Este análisis utiliza técnicas de machine learning para predecir precios de propiedades en Argentina utilizando el dataset de Properati.
+
+## Metodología
+
+1. **Preprocesamiento de Datos**: Limpieza, feature engineering y normalización
+2. **Modelado**: Comparación de múltiples algoritmos de regresión
+3. **Evaluación**: Métricas RMSE, MAE y R²
+4. **Almacenamiento**: Base de datos para persistencia de resultados
+
+## Resultados de Modelos
+
+| Modelo | RMSE | MAE | R² |
+|-------|------|-----|-----|
+"""
+        
+        for model_name, results in model_results.items():
+            report_content += f"| {model_name} | {results['test_rmse']:.4f} | {results['test_mae']:.4f} | {results['test_r2']:.4f} |\n"
+        
+        # Mejor modelo
+        best_model_name = max(model_results.keys(), key=lambda x: model_results[x]['test_r2'])
+        best_results = model_results[best_model_name]
+        
+        report_content += f"""
+## Mejor Modelo: {best_model_name}
+
+- **R²**: {best_results['test_r2']:.4f}
+- **RMSE**: {best_results['test_rmse']:.4f}
+- **MAE**: {best_results['test_mae']:.4f}
+
+## Conclusiones
+
+1. El modelo {best_model_name} mostró el mejor rendimiento con un R² de {best_results['test_r2']:.4f}
+2. Las métricas indican una capacidad predictiva {'excelente' if best_results['test_r2'] > 0.8 else 'buena' if best_results['test_r2'] > 0.6 else 'moderada'}
+3. Se recomienda continuar con la optimización de hiperparámetros para mejorar el rendimiento
+
+## Archivos Generados
+
+- `model_comparison.png`: Comparación visual de modelos
+- `feature_importance.png`: Importancia de características
+- `model_comparison.csv`: Tabla de resultados
+- `data_exploration.json`: Información de exploración de datos
+
+---
+*Reporte generado el {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+"""
+        
+        # Guardar reporte
+        report_file = REPORTS_DIR / "analysis_report.md"
+        with open(report_file, 'w', encoding='utf-8') as f:
+            f.write(report_content)
+        
+        logger.info(f"Reporte guardado en: {report_file}")
+    
+    def run_complete_pipeline(self, data_path: str = None):
         """
         Ejecuta el pipeline completo de análisis.
         
