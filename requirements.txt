@@ -44,3 +44,6 @@ isort>=5.10.0
 # Documentation
 sphinx>=5.0.0
 sphinx-rtd-theme>=1.0.0
+
+#Interfaz
+streamlit>=1.40.1
