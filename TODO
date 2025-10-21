@@ -1,0 +1,3 @@
+- Realizar carga en db Sqlite
+- Analisis tomen data desde db
+- Export .joblib
