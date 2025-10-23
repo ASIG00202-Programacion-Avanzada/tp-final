@@ -1,144 +1,117 @@
 #!/usr/bin/env python3
 """
-Análisis robusto del dataset de Properati Argentina.
-MODIFICADO:
-- Incluye 'operation_type' (Venta/Alquiler) como feature.
-- Aplica One-Hot Encoding.
-- Guarda los modelos entrenados y artefactos (imputer, columnas) con joblib.
-- Corrige el target leak (price_per_sqm) y la imputación.
+Script de Entrenamiento y Evaluación.
+
+- Lee datos limpios desde la tabla 'input_data' de SQLite.
+- Implementa un pipeline de preprocesamiento (ColumnTransformer) para
+  evitar fugas de datos.
+- Guarda los resultados (métricas e hiperparámetros) en la
+  tabla 'model_results' de SQLite.
+- Guarda los artefactos (preprocesador y modelos) en /models.
 """
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import warnings
+import joblib  
+import os
+import sys
+from pathlib import Path
+import logging
+
+
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.append(str(PROJECT_ROOT))
+
+from src.database import DatabaseManager
+import config
+
+# Imports de Scikit-learn para Pipelines
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-import warnings
-import joblib  
-import os      
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 
 warnings.filterwarnings('ignore')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-def load_and_clean_data(file_path, sample_size=30000):
+
+def load_data_from_db(db_manager):
     """
-    Cargar y limpiar el dataset de Properati.
+    Carga los datos de entrada preprocesados desde la base de datos.
     """
-    print("Cargando dataset...")
-    
-    # Cargar muestra del dataset
+    logger.info("Cargando datos limpios desde la tabla 'input_data'...")
     try:
-        # Cargamos todas las columnas, ya que filtraremos después
-        df = pd.read_csv(file_path, nrows=sample_size)
-    except FileNotFoundError:
-        print(f"Error: No se encontró el archivo en {file_path}")
-        print("Asegúrate de que el archivo 'entrenamiento.csv' esté en la carpeta 'data/raw/'")
-        return pd.DataFrame() # Devuelve un DataFrame vacío
-        
-    print(f"Dataset cargado: {df.shape}")
-    
-    # Limpiar datos
-    print("Limpiando datos...")
-    
-    # --- MODIFICADO: Filtrar por operation_type ---
-    if 'operation_type' in df.columns:
-        valid_ops = ['Venta', 'Alquiler']
-        df = df[df['operation_type'].isin(valid_ops)]
-        print(f"    Después de filtrar por 'Venta' y 'Alquiler': {df.shape}")
-    else:
-        print("Advertencia: No se encontró la columna 'operation_type'. El modelo no distinguirá Venta/Alquiler.")
+        df = db_manager.get_input_data() # Esta función debe devolver un DataFrame
+        if df.empty:
+            logger.error("La tabla 'input_data' está vacía.")
+            logger.error("Por favor, ejecuta 'python src/data_processing.py' primero.")
+            return None
+        logger.info(f"Datos cargados desde la DB. Shape: {df.shape}")
+        return df
+    except Exception as e:
+        logger.error(f"Error al cargar datos desde la DB: {e}")
+        return None
 
-    # Eliminar filas con precio faltante
-    df = df.dropna(subset=['price'])
-    print(f"    Después de eliminar precios faltantes: {df.shape}")
-    
-    # Eliminar outliers en precio (más conservador)
-    Q1 = df['price'].quantile(0.05)  
-    Q3 = df['price'].quantile(0.95)
-    df = df[(df['price'] >= Q1) & (df['price'] <= Q3)]
-    print(f"    Después de eliminar outliers de precio: {df.shape}")
-    
-    # Limpiar superficie
-    if 'surface_total' in df.columns:
-        df = df[df['surface_total'] > 0]
-        df = df[df['surface_total'] < 1000]  
-        print(f"    Después de limpiar superficie: {df.shape}")
-    
-    print(f"Datos limpiados: {df.shape}")
-    return df
-
-def create_features(df):
+def create_preprocessor(X_train):
     """
-    Crear características para el modelo.
-    DEVUELVE: X (features) e y (target) listos.
+    Crea el ColumnTransformer (pipeline de preprocesamiento) basado
+    en las columnas del DataFrame de entrenamiento.
     """
-    print("Creando características...")
+    logger.info("Creando el pipeline de preprocesamiento (ColumnTransformer)...")
     
-    df_features = df.copy()
+    # Identificar columnas automáticamente
+    # Excluir columnas de ID o texto que no son features
+    non_feature_cols = ['id','property_id', 'location', 'state_name', 'raw_data', 'created_at']
     
-    # --- MODIFICADO: Añadir 'operation_type' ---
-    important_cols = [
-        'price', 'surface_total', 'surface_covered', 'rooms', 
-        'bedrooms', 'bathrooms', 'operation_type' 
-    ]
-    available_cols = [col for col in important_cols if col in df_features.columns]
+    numeric_features = X_train.select_dtypes(include=np.number).columns.tolist()
     
-    # Crear dataset solo con columnas importantes
-    df_features = df_features[available_cols].copy()
+    # Usar .select_dtypes(['object', 'category']) para features categóricas
+    categorical_features = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
     
-    # Crear características derivadas
-    if 'bedrooms' in df_features.columns and 'bathrooms' in df_features.columns:
-        df_features['total_rooms'] = df_features['bedrooms'].fillna(0) + df_features['bathrooms'].fillna(0)
+    # Asegurarse de que las columnas no-features no estén en las listas
+    numeric_features = [col for col in numeric_features if col not in non_feature_cols]
+    categorical_features = [col for col in categorical_features if col not in non_feature_cols]
     
-    # Eliminar filas que aún tengan valores infinitos o NaN en el precio
-    df_features = df_features.replace([np.inf, -np.inf], np.nan)
-    df_features = df_features.dropna(subset=['price'])
+    logger.info(f"Features numéricas identificadas: {numeric_features}")
+    logger.info(f"Features categóricas identificadas: {categorical_features}")
 
-    # --- MODIFICADO: Aplicar One-Hot Encoding ANTES de separar X e y ---
-    if 'operation_type' in df_features.columns:
-        print("Aplicando One-Hot Encoding a 'operation_type'...")
-        # drop_first=True evita multicolinealidad (crea 'operation_type_Venta' y 0 significa 'Alquiler')
-        df_features = pd.get_dummies(df_features, columns=['operation_type'], drop_first=True)
+    # Pipeline para características numéricas
+    numeric_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='median')), # Imputación
+        ('scaler', StandardScaler()) # Escalado
+    ])
+    
+    # Pipeline para características categóricas
+    categorical_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='most_frequent')), # Imputación
+        ('onehot', OneHotEncoder(handle_unknown='ignore')) # One-Hot Encoding
+    ])
+    
+    # Combinar preprocesadores en un ColumnTransformer
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', numeric_transformer, numeric_features),
+            ('cat', categorical_transformer, categorical_features)
+        ],
+        remainder='drop' # Descarta columnas no especificadas (como 'location')
+    )
+    
+    return preprocessor
 
-    # --- CORRECCIÓN DE DATA LEAKAGE ---
-    # 1. Separar 'y' (target)
-    y = df_features['price']
-    
-    # 2. Separar 'X' (features), eliminando el target
-    X = df_features.drop(columns=['price'], errors='ignore')
-    
-    # Guardar solo las columnas numéricas para la imputación
-    numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-    feature_cols = X.columns.tolist() # Lista completa de features (incluye dummies)
 
-    # 3. Usar imputador SÓLO en columnas numéricas de X
-    imputer = SimpleImputer(strategy='median')
-    
-    # Creamos un nuevo DataFrame X_imputed para evitar SettingWithCopyWarning
-    X_imputed = X.copy()
-    X_imputed[numeric_cols] = imputer.fit_transform(X[numeric_cols])
-    X = X_imputed
-    
-    # --- GUARDAR ARTEFACTOS ---
-    os.makedirs('models', exist_ok=True)
-    joblib.dump(imputer, 'models/imputer.joblib')
-    joblib.dump(feature_cols, 'models/feature_cols.joblib') # <--- Ahora incluye las dummies
-    joblib.dump(numeric_cols, 'models/numeric_cols.joblib') # <--- Guardamos las cols a imputar
-    
-    print("Imputador y listas de columnas guardados en la carpeta 'models/'.")
-    print(f"Características creadas (X shape): {X.shape}")
-    print(f"Columnas de features: {feature_cols}")
-    
-    # Devolver X e y listos para el split
-    return X, y
-
-def train_models(X_train, X_test, y_train, y_test):
+def train_models(X_train, X_test, y_train, y_test, preprocessor, db_manager):
     """
-    Entrenar y comparar modelos.
+    Entrena, evalúa y guarda los modelos y sus resultados en la DB.
     """
-    print("Entrenando modelos...")
+    logger.info("Entrenando modelos...")
     
     models = {
         'Linear Regression': LinearRegression(),
@@ -147,126 +120,165 @@ def train_models(X_train, X_test, y_train, y_test):
     
     results = {}
     
+    # 1. Aplicar el preprocesamiento (fit_transform en train, transform en test)
+    logger.info("Aplicando preprocesamiento a los datos (fit en train)...")
+    X_train_processed = preprocessor.fit_transform(X_train)
+    
+    logger.info("Aplicando preprocesamiento a los datos (transform en test)...")
+    X_test_processed = preprocessor.transform(X_test)
+    
     for name, model in models.items():
-        print(f"    Entrenando {name}...")
+        logger.info(f"    Entrenando {name}...")
         
         try:
-            model.fit(X_train, y_train)
-            y_pred_test = model.predict(X_test)
-            test_r2 = r2_score(y_test, y_pred_test)
-            test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
+            # 2. Entrenar el modelo con los datos procesados
+            model.fit(X_train_processed, y_train)
+            
+            # 3. Evaluar
+            y_pred_test = model.predict(X_test_processed)
+            
+            metrics = {
+                'test_r2': r2_score(y_test, y_pred_test),
+                'test_rmse': np.sqrt(mean_squared_error(y_test, y_pred_test)),
+                'test_mae': mean_absolute_error(y_test, y_pred_test)
+            }
+            
+            logger.info(f"  {name}: R² = {metrics['test_r2']:.4f}, RMSE = {metrics['test_rmse']:.2f}")
 
+            # 4. Preparar datos para la DB
+            hyperparams = model.get_params()
+            
+            # (Opcional) Obtener feature importance si existe
+            feat_importance_dict = None
+            if hasattr(model, 'feature_importances_'):
+                # Obtener los nombres de las features del preprocesador
+                try:
+                    feature_names = preprocessor.get_feature_names_out()
+                    feat_importance_dict = dict(zip(feature_names, model.feature_importances_))
+                except Exception:
+                    feat_importance_dict = {"error": "No se pudieron obtener feature names"}
+            
+            # 5. Guardar resultados en la DB
+            db_manager.store_model_results(
+                model_name=name,
+                model_version="1.0",
+                metrics=metrics,
+                hyperparameters=hyperparams,
+                feature_importance=feat_importance_dict
+            )
+            
             results[name] = {
                 'model': model,
-                'test_r2': test_r2,
-                'test_rmse': test_rmse,
-                'test_mae': mean_absolute_error(y_test, y_pred_test),
+                'metrics': metrics,
                 'predictions': y_pred_test
             }
             
-            print(f"  {name}: R² = {test_r2:.4f}, RMSE = {test_rmse:.2f}")
-            
         except Exception as e:
-            print(f"  Error entrenando {name}: {e}")
+            logger.error(f"  Error entrenando {name}: {e}")
             continue
     
     return results
 
-def create_visualizations(df, results):
-    # (Esta función no necesita cambios)
-    print("Creando visualizaciones...")
+def create_visualizations(df, results, y_test):
+    """
+    Crea visualizaciones y las guarda en /reports.
+    (Modificado para recibir y_test)
+    """
+    logger.info("Creando visualizaciones...")
     os.makedirs('reports', exist_ok=True)
     plt.style.use('seaborn-v0_8')
     sns.set_palette("husl")
     fig, axes = plt.subplots(2, 2, figsize=(15, 12))
     
-    if 'price' in df.columns:
-        axes[0, 0].hist(df['price'], bins=50, alpha=0.7, edgecolor='black')
-        axes[0, 0].set_title('Distribución de Precios')
-        axes[0, 0].set_xlabel('Precio')
-        axes[0, 0].set_ylabel('Frecuencia')
+    # Gráfico 1: Distribución de Precios (del df original)
+    sns.histplot(df['price_usd'], bins=50, kde=True, ax=axes[0, 0])
+    axes[0, 0].set_title('Distribución de Precios (Datos Limpios)')
     
-    if 'surface_total' in df.columns and 'price' in df.columns:
-        sample_df = df.sample(n=min(2000, len(df)))
-        sns.scatterplot(data=sample_df, x='surface_total', y='price', hue='operation_type', alpha=0.6, ax=axes[0, 1])
-        axes[0, 1].set_title('Precio vs Superficie (por Tipo)')
+    # Gráfico 2: Precio vs Superficie (del df original)
+    sample_df = df.sample(n=min(2000, len(df)))
+    sns.scatterplot(data=sample_df, x='surface_total', y='price_usd', 
+                    hue='property_type', alpha=0.6, ax=axes[0, 1])
+    axes[0, 1].set_title('Precio vs Superficie (por Tipo)')
     
+    # Gráfico 3: Comparación de Modelos (R²)
     if results:
         model_names = list(results.keys())
-        r2_scores = [results[name]['test_r2'] for name in model_names]
-        axes[1, 0].bar(model_names, r2_scores)
+        r2_scores = [results[name]['metrics']['test_r2'] for name in model_names]
+        sns.barplot(x=model_names, y=r2_scores, ax=axes[1, 0])
         axes[1, 0].set_title('Comparación de Modelos (R²)')
         axes[1, 0].set_ylabel('R² Score')
-        axes[1, 0].tick_params(axis='x', rotation=45)
     
+    # Gráfico 4: Predicciones vs Reales (Mejor Modelo)
     if results:
-        best_model_name = max(results.keys(), key=lambda x: results[x]['test_r2'])
-        y_test = results[best_model_name].get('y_test', [])
+        best_model_name = max(results, key=lambda name: results[name]['metrics']['test_r2'])
         y_pred = results[best_model_name]['predictions']
         
-        if len(y_test) > 0:
-            axes[1, 1].scatter(y_test, y_pred, alpha=0.6)
-            axes[1, 1].plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
-            axes[1, 1].set_xlabel('Valores Reales')
-            axes[1, 1].set_ylabel('Predicciones')
-            axes[1, 1].set_title(f'Predicciones vs Reales - {best_model_name}')
+        sns.scatterplot(x=y_test, y=y_pred, alpha=0.6, ax=axes[1, 1])
+        axes[1, 1].plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
+        axes[1, 1].set_xlabel('Valores Reales (price_usd)')
+        axes[1, 1].set_ylabel('Predicciones (price_usd)')
+        axes[1, 1].set_title(f'Predicciones vs Reales - {best_model_name}')
     
     plt.tight_layout()
     plt.savefig('reports/analysis_results.png', dpi=300, bbox_inches='tight')
-    print("Visualizaciones guardadas en reports/analysis_results.png")
+    logger.info("Visualizaciones guardadas en reports/analysis_results.png")
 
 def main():
-    print("  INICIANDO ANÁLISIS DE PROPERATI ARGENTINA")
-    print("=" * 50)
+    logger.info("=== INICIANDO PIPELINE DE ENTRENAMIENTO Y EVALUACIÓN ===")
     
-    df = load_and_clean_data("data/raw/entrenamiento.csv", sample_size=50000) # Aumenté un poco el sample size
+    # 1. Conectar a la DB y cargar datos
+    db_manager = DatabaseManager()
+    df = load_data_from_db(db_manager)
     
-    if len(df) == 0:
-        print("No hay datos suficientes después de la limpieza")
-        return None
+    if df is None:
+        return
+
+    # 2. Definir Target y Features (X, y)
+    target_column = 'price_usd'
     
-    X, y = create_features(df)
+    # Columnas a excluir de las features (X)
+    # 'raw_data' , 'created_at' y 'id' son de la DB, 'property_id' es un identificador
+    columns_to_drop = [target_column, 'id','property_id', 'created_at', 'raw_data']
     
-    if len(X) == 0:
-        print("  No hay datos suficientes después de crear características")
-        return None
+    y = df[target_column]
+    X = df.drop(columns=columns_to_drop, errors='ignore')
     
-    print("Preparando datos para modelado...")
-    print(f"    NaN en X: {X.isnull().sum().sum()}")
-    print(f"    NaN en y: {y.isnull().sum()}")
-    
+    # 3. Dividir datos (ANTES de preprocesar)
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=X[X.columns[X.columns.str.startswith('operation_type')]].iloc[:, 0] if any(X.columns.str.startswith('operation_type')) else None
+        X, y, test_size=0.2, random_state=42
     )
-    print(f"Datos preparados - Train: {X_train.shape}, Test: {X_test.shape}")
+    logger.info(f"Datos divididos - Train: {X_train.shape}, Test: {X_test.shape}")
     
-    results = train_models(X_train, X_test, y_train, y_test)
+    # 4. Crear el preprocesador (se ajusta solo en X_train)
+    preprocessor = create_preprocessor(X_train)
     
-    if results:
-        if 'Linear Regression' in results:
-            joblib.dump(results['Linear Regression']['model'], 'models/linear_regression.joblib')
-            print("Modelo de Regresión Lineal guardado.")
+    # 5. Entrenar modelos y guardar resultados en DB
+    results = train_models(X_train, X_test, y_train, y_test, preprocessor, db_manager)
+    
+    if not results:
+        logger.error("No se pudieron entrenar modelos.")
+        return
+
+    # 6. Guardar artefactos (Preprocesador y Modelos)
+    os.makedirs('models', exist_ok=True)
+    
+    # Guardar el preprocesador
+    joblib.dump(preprocessor, 'models/preprocessor.joblib')
+    logger.info("Pipeline de preprocesamiento guardado en 'models/preprocessor.joblib'")
+    
+    # Guardar los modelos entrenados
+    if 'Linear Regression' in results:
+        joblib.dump(results['Linear Regression']['model'], 'models/linear_regression.joblib')
+        logger.info("Modelo de Regresión Lineal guardado.")
         
-        if 'Random Forest' in results:
-            joblib.dump(results['Random Forest']['model'], 'models/random_forest.joblib')
-            print("Modelo de Random Forest guardado.")
-    else:
-        print("No se pudieron entrenar modelos")
-        return None
+    if 'Random Forest' in results:
+        joblib.dump(results['Random Forest']['model'], 'models/random_forest.joblib')
+        logger.info("Modelo de Random Forest guardado.")
     
-    for name in results:
-        results[name]['y_test'] = y_test
+    # 7. Crear Visualizaciones
+    create_visualizations(df, results, y_test)
     
-    print("\nRESULTADOS FINALES:")
-    print("=" * 30)
-    for name, result in results.items():
-        print(f"{name}:")
-        print(f"    R²: {result['test_r2']:.4f}")
-        print(f"    RMSE: {result['test_rmse']:.2f}")
-    
-    create_visualizations(df, results)
-    
-    print("Análisis completado exitosamente!")
+    logger.info("=== PIPELINE DE ENTRENAMIENTO FINALIZADO ===")
     return results
 
 if __name__ == "__main__":

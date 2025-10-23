@@ -88,37 +88,34 @@ pip install -r requirements.txt
 ### **Ejecución Rápida del Proyecto**
 
 
-#### **Paso 1: Configurar Entorno**
-```bash
-# Crear entorno virtual
-python3 -m venv venv
-
-# Activar entorno virtual
-source venv/bin/activate  # En Linux
-
-venv\Scripts\activate     # En Windows
-
-# Instalar dependencias
-pip install -r requirements.txt
-```
-
-### **2. Adquisición de datos**
+### **Paso 1. Adquisición de datos**
 
 ```bash
 # Descarga del dataset desde Kanggle
 python .\scripts\download_data.py
 ```
 
+### **Paso 2. Armado de DB y preprocesamiento de datos **
+
+```bash
+# Verifica que este la data y armado de database
+python scripts/setup_db.py
+# Procesa la data y carga en DB
+python .\scripts\data_processing.py
+```
 #### **Paso 3: Ejecutar Análisis**
 ```bash
 # Análisis completo con visualizaciones
 python robust_analysis.py
-
-# análisis básico
-python simple_analysis.py
 ```
 
-#### **Paso 4: Ver Resultados**
+#### **Paso 4: App strealit**
+```bash
+# Prueba de modelos en app streamlit
+streamlit run .\scripts\app.py
+```
+
+#### **Paso 5: Ver Resultados**
 ```bash
 # Los resultados se guardan en:
 # - reports/analysis_results.png (gráficos)
@@ -133,19 +130,6 @@ python simple_analysis.py
 4. **Entrena modelos** (Linear Regression, Random Forest)
 5. **Evalúa** con métricas (R², RMSE, MAE)
 6. **Genera visualizaciones** automáticamente
-
-### **Configuración Avanzada (Opcional)**
-
-Si quieres usar el pipeline completo:
-
-```bash
-# Configurar base de datos
-python scripts/setup_simple.py
-
-# Ejecutar pipeline completo
-python scripts/main_pipeline.py
-```
-
 
 
 ## Algoritmos Implementados
@@ -175,7 +159,7 @@ python scripts/main_pipeline.py
 ### Tablas Implementadas
 
 1. **`input_data`**: Datos de entrada preprocesados
-   - `property_id`, `property_type`, `location`
+   - `property_id`, `property_type`,`operation_type`, `location`
    - `surface_total`, `surface_covered`, `rooms`
    - `bedrooms`, `bathrooms`, `price_usd`
 
@@ -252,7 +236,7 @@ Editar `src/models.py` para:
 ### Scripts de Utilidad
 
 - `download_data.py`: Descarga automática del dataset
-- `setup_database.py`: Configuración de base de datos
+- `setup_db.py`: Configuración de base de datos e inicialización
 - `main_pipeline.py`: Pipeline completo automatizado
 
 ---

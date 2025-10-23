@@ -6,10 +6,10 @@ import sys
 from pathlib import Path
 import logging
 
-# Agregar src al path
-sys.path.append(str(Path(__file__).parent.parent / "src"))
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.append(str(PROJECT_ROOT))
 
-from database import DatabaseManager
+from src.database import DatabaseManager
 from config import *
 
 # Configurar logging
@@ -42,11 +42,11 @@ def setup_project():
             logger.info(f"Dataset encontrado: {csv_files[0].name}")
         else:
             logger.warning("No se encontraron archivos CSV en data/raw/")
-            logger.info("Coloca tu dataset en: data/raw/")
+            logger.info("Ejecuta python .\scripts\download_data.py")
         
         logger.info("Proyecto configurado exitosamente!")
         logger.info("\nPróximos pasos:")
-        logger.info("   1. Coloca tu dataset en: data/raw/")
+        logger.info("   1. Ejecuta: python .\scripts\download_data.py")
         logger.info("   2. Ejecuta: python scripts/main_pipeline.py")
         logger.info("   3. O ejecuta: python run_example.py (para probar)")
         

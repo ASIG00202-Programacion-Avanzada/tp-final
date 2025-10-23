@@ -10,7 +10,6 @@ plotly>=5.15.0
 
 # Database
 sqlalchemy>=2.0.0
-#psycopg2-binary>=2.9.0
 
 # Jupyter and Development
 #jupyter>=1.0.0

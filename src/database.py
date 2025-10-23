@@ -9,8 +9,21 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, Text, JSON
 from datetime import datetime
 import json
 from config import DB_CONFIG
+from pathlib import Path 
 
 Base = declarative_base()
+
+
+def safe_cast(value, cast_type, default=None):
+    """
+    Intenta castear un valor, devolviendo un default si falla o es NaN.
+    """
+    if pd.isna(value):
+        return default
+    try:
+        return cast_type(value)
+    except (ValueError, TypeError):
+        return default
 
 class InputData(Base):
     """Table for storing preprocessed input data."""
@@ -19,58 +32,7 @@ class InputData(Base):
     id = Column(Integer, primary_key=True)
     property_id = Column(String(50), unique=True)
     property_type = Column(String(50))
-    location = Column(String(100))
-    surface_total = Column(Float)
-    surface_covered = Column(Float)
-    rooms = Column(Integer)
-    bedrooms = Column(Integer)
-    bathrooms = Column(Integer)
-    price_usd = Column(Float)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    raw_data = Column(JSON)
-
-class ModelResults(Base):
-    """Table for storing model predictions and metrics."""
-    __tablename__ = 'model_results'
-    
-    id = Column(Integer, primary_key=True)
-    model_name = Column(String(100))
-    model_version = Column(String(20))
-    train_date = Column(DateTime, default=datetime.utcnow)
-    test_rmse = Column(Float)
-    test_mae = Column(Float)
-    test_r2 = Column(Float)
-    cv_rmse_mean = Column(Float)
-    cv_rmse_std = Column(Float)
-    cv_mae_mean = Column(Float)
-    cv_mae_std = Column(Float)
-    cv_r2_mean = Column(Float)
-    cv_r2_std = Column(Float)
-    hyperparameters = Column(JSON)
-    feature_importance = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-"""
-Database module for storing and retrieving data and model results.
-"""
-import pandas as pd
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, JSON
-from datetime import datetime
-import json
-from config import DB_CONFIG
-
-Base = declarative_base()
-
-class InputData(Base):
-    """Table for storing preprocessed input data."""
-    __tablename__ = 'input_data'
-    
-    id = Column(Integer, primary_key=True)
-    property_id = Column(String(50), unique=True)
-    property_type = Column(String(50))
+    operation_type = Column(String(50))
     location = Column(String(100))
     surface_total = Column(Float)
     surface_covered = Column(Float)
@@ -125,9 +87,7 @@ class DatabaseManager:
     
     def _connect(self):
         """Establish database connection."""
-        if DB_CONFIG["type"] == "postgresql":
-            connection_string = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['name']}"
-        elif DB_CONFIG["type"] == "sqlite":
+        if DB_CONFIG["type"] == "sqlite":
             # Para SQLite, usar ruta relativa al proyecto
             db_path = Path(__file__).parent.parent / "data" / DB_CONFIG['name']
             connection_string = f"sqlite:///{db_path}"
@@ -140,31 +100,57 @@ class DatabaseManager:
         # Create tables
         Base.metadata.create_all(self.engine)
     
+
     def store_input_data(self, df: pd.DataFrame):
-        """Store preprocessed input data."""
+        """
+        Almacena datos de entrada preprocesados.
+        """
         session = self.Session()
         try:
-            for _, row in df.iterrows():
-                input_data = InputData(
-                    property_id=str(row.get('property_id', '')),
-                    property_type=str(row.get('property_type', '')),
-                    location=str(row.get('location', '')),
-                    surface_total=float(row.get('surface_total', 0)),
-                    surface_covered=float(row.get('surface_covered', 0)),
-                    rooms=int(row.get('rooms', 0)),
-                    bedrooms=int(row.get('bedrooms', 0)),
-                    bathrooms=int(row.get('bathrooms', 0)),
-                    price_usd=float(row.get('price_usd', 0)),
-                    raw_data=row.to_dict()
-                )
-                session.add(input_data)
+            
+            session.query(InputData).delete()
             session.commit()
-            print(f"Stored {len(df)} records in input_data table")
+            print("Datos antiguos de 'input_data' eliminados.")
+
+            # 2. Preparar los datos para la inserción
+            data_to_insert = []
+            for _, row in df.iterrows():
+                
+                # 3. Serialización segura de raw_data
+                # to_json() maneja dtypes de pandas (Categorical, nan)
+                # default_handler=str es un seguro para tipos no esperados
+                serializable_raw_data = json.loads(
+                    row.to_json(default_handler=str, date_format='iso')
+                )
+
+                input_data = InputData(
+                    # 4. Uso safe_cast para evitar errores de NaN -> int
+                    property_id=str(row.get('property_id', '')),
+                    property_type=safe_cast(row.get('property_type'), str, ''),
+                    operation_type=safe_cast(row.get('operation_type'), str, ''),
+                    location=safe_cast(row.get('location'), str, ''),
+                    surface_total=safe_cast(row.get('surface_total'), float, None),
+                    surface_covered=safe_cast(row.get('surface_covered'), float, None),
+                    rooms=safe_cast(row.get('rooms'), int, None),
+                    bedrooms=safe_cast(row.get('bedrooms'), int, None),
+                    bathrooms=safe_cast(row.get('bathrooms'), int, None),
+                    price_usd=safe_cast(row.get('price_usd'), float, None),
+                    raw_data=serializable_raw_data
+                )
+                data_to_insert.append(input_data)
+            
+            # 5. Usar bulk_save_objects para inserción rápida
+            session.bulk_save_objects(data_to_insert)
+            session.commit()
+            print(f"Stored {len(data_to_insert)} records in input_data table")
+            
         except Exception as e:
             session.rollback()
-            print(f"Error storing input data: {e}")
+            # Imprime el error real
+            print(f"Error storing input data: {e}") 
         finally:
             session.close()
+
     
     def store_model_results(self, model_name: str, model_version: str, 
                           metrics: dict, hyperparameters: dict, 
@@ -240,10 +226,10 @@ class DatabaseManager:
             query = session.query(InputData)
             if limit:
                 query = query.limit(limit)
-            results = query.all()
-            return results
+            df = pd.read_sql(query.statement, self.engine)
+            return df
         except Exception as e:
             print(f"Error retrieving input data: {e}")
-            return []
+            return pd.DataFrame()
         finally:
             session.close()

@@ -3,6 +3,13 @@ import pandas as pd
 import numpy as np
 import joblib
 import os
+import sys
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).parent
+sys.path.append(str(PROJECT_ROOT))
+
 
 # --- Configuración de la Página ---
 st.set_page_config(
@@ -15,28 +22,29 @@ st.set_page_config(
 @st.cache_resource
 def load_models_and_artifacts():
     """
-    Carga los modelos, el imputador y las listas de columnas desde la carpeta 'models/'.
+    Carga los modelos y el preprocesador desde la carpeta 'models/'.
     """
     base_path = 'models'
     try:
         lr_model = joblib.load(os.path.join(base_path, 'linear_regression.joblib'))
         rf_model = joblib.load(os.path.join(base_path, 'random_forest.joblib'))
-        imputer = joblib.load(os.path.join(base_path, 'imputer.joblib'))
-        feature_cols = joblib.load(os.path.join(base_path, 'feature_cols.joblib'))
-        numeric_cols = joblib.load(os.path.join(base_path, 'numeric_cols.joblib')) # <--- MODIFICADO
+        
+        # Cargamos el NUEVO preprocesador
+        preprocessor = joblib.load(os.path.join(base_path, 'preprocessor.joblib'))
         
         models = {
             'Regresión Lineal': lr_model,
             'Random Forest': rf_model
         }
-        return models, imputer, feature_cols, numeric_cols
+        return models, preprocessor
         
     except FileNotFoundError as e:
         st.error(f"Error al cargar archivos del modelo: {e}")
-        st.error(f"Asegúrate de haber ejecutado el script 'train.py' primero para generar los archivos en la carpeta '{base_path}'.")
-        return None, None, None, None
+        st.error("Asegúrate de haber ejecutado 'robust_analysis.py' primero.")
+        st.error("Este script genera 'preprocessor.joblib' y los modelos.")
+        return None, None
 
-models, imputer, feature_cols, numeric_cols = load_models_and_artifacts()
+models, preprocessor = load_models_and_artifacts()
 
 # Si los modelos no se cargaron, detener la app
 if models is None:
@@ -44,35 +52,37 @@ if models is None:
 
 # --- Interfaz de Usuario (Sidebar) ---
 st.sidebar.title("🏠 Predictor de Precios")
-st.sidebar.markdown("Ingrese las características de la propiedad para estimar su precio.")
+st.sidebar.markdown("Ingrese las características de la propiedad.")
 
 # Selector de modelo
 model_choice = st.sidebar.selectbox(
-    "Seleccione el modelo de predicción:",
+    "Seleccione el modelo:",
     options=list(models.keys())
 )
 
-# --- MODIFICADO: Selector de Tipo de Operación ---
-op_type = st.sidebar.selectbox(
+st.sidebar.header("Características Principales")
+
+# --- MODIFICADO: Inputs para el nuevo modelo ---
+operation_type = st.sidebar.selectbox(
     "Tipo de Operación:",
-    options=['Venta', 'Alquiler'],
-    index=0 # Default en 'Venta'
+    options=['Venta', 'Alquiler'], # Asegúrate que coincida (Venta, Alquiler)
+    index=0
 )
 
-st.sidebar.header("Características de la Propiedad")
-
-# Las columnas numéricas que esperamos (basadas en numeric_cols.joblib)
-# ['surface_total', 'surface_covered', 'rooms', 'bedrooms', 'bathrooms', 'total_rooms']
-# Pediremos las 5 primeras, 'total_rooms' se calcula.
+property_type = st.sidebar.selectbox(
+    "Tipo de Propiedad:",
+    options=['Departamento', 'Casa', 'PH', 'Otro'], # Ajusta según tus datos
+    index=0
+)
 
 surface_total = st.sidebar.number_input(
     "Superficie Total (m²)", 
-    min_value=10, max_value=1000, value=60, step=5
+    min_value=10, max_value=2000, value=60, step=5
 )
 
 surface_covered = st.sidebar.number_input(
     "Superficie Cubierta (m²)", 
-    min_value=10, max_value=1000, value=50, step=5
+    min_value=10, max_value=2000, value=50, step=5
 )
 
 rooms = st.sidebar.number_input(
@@ -90,56 +100,58 @@ bathrooms = st.sidebar.number_input(
     min_value=0, max_value=10, value=1, step=1
 )
 
+
 # Botón para predecir
 predict_button = st.sidebar.button("Predecir Precio", type="primary")
 
-# --- Lógica de Predicción y Visualización ---
+# --- Lógica de Predicción y Visualización (MODIFICADO) ---
 st.title("Estimación del Precio de la Propiedad")
 
 if predict_button:
-    # 1. Crear 'total_rooms' como en el entrenamiento
-    total_rooms = bedrooms + bathrooms
     
-    # 2. Crear diccionario con los datos de entrada numéricos
+    # 1. Crear diccionario con datos de entrada
+    # Debe contener TODAS las columnas que 'data_processing.py' crea
+    # y 'robust_analysis.py' usa para entrenar.
     input_data = {
+        'operation_type': operation_type,
+        'property_type': property_type,
         'surface_total': surface_total,
         'surface_covered': surface_covered,
         'rooms': rooms,
         'bedrooms': bedrooms,
-        'bathrooms': bathrooms,
-        'total_rooms': total_rooms
+        'bathrooms': bathrooms
     }
     
-    # 3. Crear DataFrame solo con las columnas numéricas que se imputan
-    # Filtramos el diccionario por las columnas que realmente están en numeric_cols
-    input_numeric_data = {k: v for k, v in input_data.items() if k in numeric_cols}
-    input_df = pd.DataFrame([input_numeric_data])
-
-    # --- MODIFICADO: Procesamiento de 'operation_type' ---
+    # Replicar Feature Engineering de 'data_processing.py'
     try:
-        # 4. Añadir la columna categórica
-        input_df['operation_type'] = op_type
+        input_data['total_rooms'] = input_data['bedrooms'] + input_data['bathrooms']
         
-        # 5. Aplicar get_dummies (creará 'operation_type_Venta' o 'operation_type_Alquiler')
-        input_df_processed = pd.get_dummies(input_df, columns=['operation_type'])
+        if input_data['surface_total'] > 0:
+            input_data['surface_ratio'] = input_data['surface_covered'] / input_data['surface_total']
+            input_data['room_density'] = input_data['rooms'] / input_data['surface_total']
+        else:
+            input_data['surface_ratio'] = 1.0
+            input_data['room_density'] = 0.0
+            
+        input_data['surface_category'] = pd.cut(
+            [input_data['surface_total']],
+            bins=5, # Usamos 5 bins como en data_processing
+            labels=['Muy Pequeña', 'Pequeña', 'Mediana', 'Grande', 'Muy Grande'],
+            right=False # Asegurar consistencia
+        )[0]
         
-        # 6. REINDEXAR: Esta es la parte clave.
-        # Asegura que el DataFrame tenga EXACTAMENTE las mismas columnas que 'feature_cols'
-        # Rellena con 0 las columnas dummy que no se crearon (ej. si se eligió 'Alquiler', 
-        # 'operation_type_Venta' no existirá, así que reindex la crea y la pone en 0)
-        input_df_final = input_df_processed.reindex(columns=feature_cols, fill_value=0)
         
-        # 7. Aplicar el imputador (transform, NO fit) a las columnas numéricas
-        # Copiamos para evitar advertencias
-        input_df_imputed = input_df_final.copy()
-        input_df_imputed[numeric_cols] = imputer.transform(input_df_final[numeric_cols])
+        input_df = pd.DataFrame([input_data])
         
-        # 8. Seleccionar modelo y predecir
+        
+        input_df_processed = preprocessor.transform(input_df)
+        
+        
         selected_model = models[model_choice]
-        prediction = selected_model.predict(input_df_imputed)
+        prediction = selected_model.predict(input_df_processed)
         
-        # 9. Mostrar resultado
-        st.header(f"Resultado con {model_choice} (para {op_type})")
+        
+        st.header(f"Resultado con {model_choice} para {operation_type}")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -148,17 +160,21 @@ if predict_button:
         
         with col2:
             st.info("Datos Ingresados")
-            # Mostrar los datos originales que el usuario ingresó
-            display_data = input_data.copy()
-            display_data['operation_type'] = op_type
+            # Mostrar los datos que el usuario ingresó
+            display_data = {
+                'Tipo Operación': operation_type,
+                'Tipo Propiedad': property_type,
+                'Superficie Total': surface_total,
+                'Superficie Cubierta': surface_covered,
+                'Ambientes': rooms,
+                'Dormitorios': bedrooms,
+                'Baños': bathrooms
+            }
             st.dataframe(pd.DataFrame([display_data]).T.rename(columns={0: 'Valor'}))
-            
-            # (Opcional) Mostrar los datos procesados para debug
-            # st.subheader("Datos procesados (para el modelo)")
-            # st.dataframe(input_df_imputed)
 
     except Exception as e:
         st.error(f"Error durante la predicción: {e}")
-        st.error("Verifica que los archivos 'models/*.joblib' estén actualizados con la nueva lógica.")
+        st.error("Verifica que las features de la app coincidan con las del entrenamiento.")
+        
 else:
     st.info("Por favor, ingrese los datos en la barra lateral y presione 'Predecir Precio'.")

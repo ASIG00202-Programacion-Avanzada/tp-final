@@ -16,13 +16,12 @@ SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 SRC_DIR = PROJECT_ROOT / "src"
 
 # Database configuration
+DB_NAME = "properati_analisis.db"
+DB_PATH = PROJECT_ROOT / "data" / DB_NAME
 DB_CONFIG = {
-    "type": os.getenv("DB_TYPE", "sqlite"),  # Cambiado a SQLite por defecto
-    "host": os.getenv("DB_HOST", "localhost"),
-    "port": int(os.getenv("DB_PORT", "5432")),
-    "name": os.getenv("DB_NAME", "properati_analysis.db"),  # Archivo SQLite
-    "user": os.getenv("DB_USER", ""),
-    "password": os.getenv("DB_PASSWORD", "")
+    "type": "sqlite",
+    "name": DB_NAME,
+    "path": str(DB_PATH) # Ruta completa al archivo .db
 }
 
 # Model configuration
