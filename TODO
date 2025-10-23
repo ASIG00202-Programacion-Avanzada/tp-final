@@ -1,3 +1,5 @@
-- Realizar carga en db Sqlite
-- Analisis tomen data desde db
-- Export .joblib
+- Verificar modelos, realizar pruebas
+- Cargar notebooks de EDA
+- Armar modulo de testing
+- Sumar (opcional) ejecucion de pipeline completo
+- Revisar README y modelos definitivos a comparar

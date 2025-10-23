@@ -25,7 +25,6 @@ class DataProcessor:
     """
     
     def __init__(self):
-        # --- AÑADIDO: Instancia del DatabaseManager ---
         try:
             self.db_manager = DatabaseManager()
             logger.info("DatabaseManager inicializado.")
@@ -103,7 +102,6 @@ class DataProcessor:
     def create_features(self, df):
         """
         Crea nuevas características (feature engineering).
-        --- MODIFICADO: Se eliminaron features con FUGAS DE DATOS ---
         """
         df_features = df.copy()
         
@@ -113,7 +111,6 @@ class DataProcessor:
             df_features['surface_ratio'] = df_features['surface_ratio'].fillna(1)
             df_features['surface_ratio'] = df_features['surface_ratio'].replace([np.inf, -np.inf], 1)
         
-        # --- ELIMINADO: 'price_per_sqm' (Target Leakage) ---
         
         # Crear total de habitaciones
         if 'bedrooms' in df_features.columns and 'bathrooms' in df_features.columns:
@@ -129,7 +126,6 @@ class DataProcessor:
             df_features['city'] = df_features['location'].str.split(',').str[0].str.strip()
             df_features['province'] = df_features['location'].str.split(',').str[-1].str.strip()
         
-        # --- ELIMINADO: 'price_category' (Target Leakage) ---
         
         # Crear categorías de superficie
         if 'surface_total' in df_features.columns:
