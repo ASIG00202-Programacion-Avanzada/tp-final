@@ -46,3 +46,5 @@ sphinx-rtd-theme>=1.0.0
 
 #Interfaz
 streamlit>=1.40.1
+
+#prueba pbc
