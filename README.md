@@ -13,12 +13,12 @@ Este proyecto implementa un sistema completo de análisis de precios de propieda
 
 ### Tecnologías Utilizadas
 
-- **Python 3.8+**
+- **Python 3.13.7**
 - **Scikit-learn**: Algoritmos de machine learning
 - **Pandas & NumPy**: Manipulación de datos
 - **Matplotlib & Seaborn**: Visualizaciones
 - **SQLAlchemy**: Base de datos
-- **XGBoost & LightGBM**: Algoritmos avanzados
+- **LightGBM**: Algoritmos avanzados
 - **Jupyter Notebooks**: Análisis exploratorio
 
 ---
@@ -104,9 +104,15 @@ python scripts/setup_db.py
 python .\scripts\data_processing.py
 ```
 #### **Paso 3: Ejecutar Análisis**
+##### Opción 1: Realiza un analisis con multiples modelos
 ```bash
 # Análisis completo con visualizaciones
 python robust_analysis.py
+```
+##### Opción 2: Realiza un analisis simple con 2 modelos
+```bash
+# Análisis completo con visualizaciones
+python minimal_analysis.py
 ```
 
 #### **Paso 4: App strealit**
@@ -140,10 +146,7 @@ streamlit run .\scripts\app.py
 2. **Ridge Regression**: Regresión con regularización L2
 3. **Lasso Regression**: Regresión con regularización L1
 4. **Random Forest**: Ensemble de árboles de decisión
-5. **Gradient Boosting**: Boosting de gradientes
-6. **XGBoost**: Gradient boosting optimizado
-7. **LightGBM**: Gradient boosting ligero
-8. **SVR**: Support Vector Regression
+5. **LightGBM**: Gradient boosting ligero
 
 ### Métricas de Evaluación
 
@@ -238,6 +241,8 @@ Editar `src/models.py` para:
 - `download_data.py`: Descarga automática del dataset
 - `setup_db.py`: Configuración de base de datos e inicialización
 - `main_pipeline.py`: Pipeline completo automatizado
+- `test_dataset.py`: Analisis inicial del estado del dataset
+- `tests\test_models.py`: Tests unitarios para el módulo de modelos 
 
 ---
 
