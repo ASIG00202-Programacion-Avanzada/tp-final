@@ -172,11 +172,6 @@ streamlit run .\scripts\app.py
    - `cv_rmse_mean`, `cv_mae_mean`, `cv_r2_mean`
    - `hyperparameters`, `feature_importance`
 
-3. **`model_config`**: Configuraciones de modelos
-   - `model_name`, `config_name`
-   - `parameters`, `preprocessing_steps`
-   - `feature_engineering`
-
 ---
 
 ## Visualizaciones
