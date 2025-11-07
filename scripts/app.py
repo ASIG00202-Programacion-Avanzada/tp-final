@@ -1,180 +1,133 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import joblib
 import os
 import sys
 from pathlib import Path
 
-
+# --- Configuración del Path ---
 PROJECT_ROOT = Path(__file__).parent
 sys.path.append(str(PROJECT_ROOT))
 
-
 # --- Configuración de la Página ---
 st.set_page_config(
-    page_title="Predictor de Precios de Propiedades",
+    page_title="Predictor Inmobiliario",
     page_icon="🏠",
-    layout="wide"
+    layout="centered"
 )
 
-# --- Carga de Modelos y Artefactos ---
+# --- Carga Dinámica de Modelos ---
 @st.cache_resource
-def load_models_and_artifacts():
+def load_models_dynamic():
     """
-    Carga los modelos y el preprocesador desde la carpeta 'models/'.
+    Explora la carpeta 'models/' y carga todos los pipelines disponibles
+    automáticamente, sin importar cuántos sean.
     """
-    base_path = 'models'
-    try:
-        lr_model = joblib.load(os.path.join(base_path, 'linear_regression.joblib'))
-        rf_model = joblib.load(os.path.join(base_path, 'random_forest.joblib'))
-        
-        # Cargamos el NUEVO preprocesador
-        preprocessor = joblib.load(os.path.join(base_path, 'preprocessor.joblib'))
-        
-        models = {
-            'Regresión Lineal': lr_model,
-            'Random Forest': rf_model
-        }
-        return models, preprocessor
-        
-    except FileNotFoundError as e:
-        st.error(f"Error al cargar archivos del modelo: {e}")
-        st.error("Asegúrate de haber ejecutado 'robust_analysis.py' primero.")
-        st.error("Este script genera 'preprocessor.joblib' y los modelos.")
-        return None, None
+    models_dir = Path('models')
+    if not models_dir.exists():
+        st.error("La carpeta 'models/' no existe. Ejecuta primero un script de entrenamiento.")
+        return None
 
-models, preprocessor = load_models_and_artifacts()
+    models = {}
+    # Buscamos todos los archivos que terminen en _pipeline.joblib
+    for model_file in models_dir.glob('*_pipeline.joblib'):
+        try:
+            # Convierte los nombres de archivos a nombre legible
+            # Ej: 'linear_regression_pipeline.joblib' -> 'Linear Regression'
+            model_name = model_file.stem.replace('_pipeline', '').replace('_', ' ').title()
+            
+            # Cargar el pipeline completo
+            models[model_name] = joblib.load(model_file)
+            print(f"Modelo cargado: {model_name}")
+            
+        except Exception as e:
+            st.warning(f"No se pudo cargar {model_file.name}: {e}")
 
-# Si los modelos no se cargaron, detener la app
-if models is None:
+    if not models:
+        st.error("No se encontraron modelos válidos en 'models/'.")
+        return None
+    
+    return models
+
+# Cargar modelos al iniciar la app
+models_loaded = load_models_dynamic()
+if models_loaded is None:
     st.stop()
 
-# --- Interfaz de Usuario (Sidebar) ---
-st.sidebar.title("🏠 Predictor de Precios")
-st.sidebar.markdown("Ingrese las características de la propiedad.")
+# --- Interfaz Gráfica ---
+st.title("🏠 Estimador de Valor de Propiedades")
+st.markdown(f"**Modelos disponibles:** {len(models_loaded)}")
+st.markdown("---")
 
-# Selector de modelo
-model_choice = st.sidebar.selectbox(
-    "Seleccione el modelo:",
-    options=list(models.keys())
-)
-
-st.sidebar.header("Características Principales")
-
-# --- MODIFICADO: Inputs para el nuevo modelo ---
-operation_type = st.sidebar.selectbox(
-    "Tipo de Operación:",
-    options=['Venta', 'Alquiler'], # Asegúrate que coincida (Venta, Alquiler)
-    index=0
-)
-
-property_type = st.sidebar.selectbox(
-    "Tipo de Propiedad:",
-    options=['Departamento', 'Casa', 'PH', 'Otro'], # Ajusta según tus datos
-    index=0
-)
-
-surface_total = st.sidebar.number_input(
-    "Superficie Total (m²)", 
-    min_value=10, max_value=2000, value=60, step=5
-)
-
-surface_covered = st.sidebar.number_input(
-    "Superficie Cubierta (m²)", 
-    min_value=10, max_value=2000, value=50, step=5
-)
-
-rooms = st.sidebar.number_input(
-    "Total de Ambientes", 
-    min_value=1, max_value=10, value=2, step=1
-)
-
-bedrooms = st.sidebar.number_input(
-    "Dormitorios", 
-    min_value=0, max_value=10, value=1, step=1
-)
-
-bathrooms = st.sidebar.number_input(
-    "Baños", 
-    min_value=0, max_value=10, value=1, step=1
-)
-
-
-# Botón para predecir
-predict_button = st.sidebar.button("Predecir Precio", type="primary")
-
-# --- Lógica de Predicción y Visualización (MODIFICADO) ---
-st.title("Estimación del Precio de la Propiedad")
-
-if predict_button:
+# Sidebar
+with st.sidebar:
+    st.header("🛠️ Configuración")
     
-    # 1. Crear diccionario con datos de entrada
-    # Debe contener TODAS las columnas que 'data_processing.py' crea
-    # y 'robust_analysis.py' usa para entrenar.
-    input_data = {
+    # Selector dinámico basado en los modelos encontrados
+    selected_model_name = st.selectbox(
+        "Selecciona el Modelo Predictivo",
+        options=sorted(list(models_loaded.keys()))
+    )
+    
+    st.markdown("---")
+    st.header("📋 Características de la Propiedad")
+    
+    operation_type = st.selectbox("Operación", ['Venta', 'Alquiler', 'Alquiler temporal'])
+    property_type = st.selectbox("Tipo de Propiedad", ['Departamento', 'Casa', 'PH', 'Local comercial', 'Oficina', 'Lote'])
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        surface_total = st.number_input("Sup. Total (m²)", min_value=10, value=70, step=5)
+    with col2:
+         surface_covered = st.number_input("Sup. Cubierta (m²)", min_value=10, value=60, step=5)
+         
+    rooms = st.slider("Ambientes", 1, 15, 3)
+    col3, col4 = st.columns(2)
+    with col3:
+        bedrooms = st.number_input("Dormitorios", min_value=0, max_value=10, value=2)
+    with col4:
+        bathrooms = st.number_input("Baños", min_value=1, max_value=10, value=1)
+    
+    predict_btn = st.button("Calcular Precio!", type="primary", use_container_width=True)
+
+# --- Lógica de Predicción ---
+if predict_btn:
+    # 1. Construir DataFrame con los inputs
+    input_data = pd.DataFrame([{
         'operation_type': operation_type,
         'property_type': property_type,
-        'surface_total': surface_total,
-        'surface_covered': surface_covered,
-        'rooms': rooms,
-        'bedrooms': bedrooms,
-        'bathrooms': bathrooms
-    }
+        'surface_total': float(surface_total),
+        'surface_covered': float(surface_covered),
+        'rooms': int(rooms),
+        'bedrooms': int(bedrooms),
+        'bathrooms': int(bathrooms)
+    }])
     
-    # Replicar Feature Engineering de 'data_processing.py'
+    # 2. Obtener el pipeline seleccionado y predecir
+    pipeline = models_loaded[selected_model_name]
+    
     try:
-        input_data['total_rooms'] = input_data['bedrooms'] + input_data['bathrooms']
-        
-        if input_data['surface_total'] > 0:
-            input_data['surface_ratio'] = input_data['surface_covered'] / input_data['surface_total']
-            input_data['room_density'] = input_data['rooms'] / input_data['surface_total']
-        else:
-            input_data['surface_ratio'] = 1.0
-            input_data['room_density'] = 0.0
+        with st.spinner(f"Calculando con {selected_model_name}..."):
+            prediction = pipeline.predict(input_data)[0]
             
-        input_data['surface_category'] = pd.cut(
-            [input_data['surface_total']],
-            bins=5, # Usamos 5 bins como en data_processing
-            labels=['Muy Pequeña', 'Pequeña', 'Mediana', 'Grande', 'Muy Grande'],
-            right=False # Asegurar consistencia
-        )[0]
+        st.success("Cálculo exitoso")
         
+        # Muestra principal del resultado
+        st.markdown("### Precio Estimado de Mercado")
+        st.markdown(f"<h1 style='text-align: center; color: #4CAF50;'>US$ {prediction:,.0f}</h1>", unsafe_allow_html=True)
         
-        input_df = pd.DataFrame([input_data])
-        
-        
-        input_df_processed = preprocessor.transform(input_df)
-        
-        
-        selected_model = models[model_choice]
-        prediction = selected_model.predict(input_df_processed)
-        
-        
-        st.header(f"Resultado con {model_choice} para {operation_type}")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.success(f"El precio estimado es:")
-            st.metric(label="Precio (USD)", value=f"$ {prediction[0]:,.2f}")
-        
-        with col2:
-            st.info("Datos Ingresados")
-            # Mostrar los datos que el usuario ingresó
-            display_data = {
-                'Tipo Operación': operation_type,
-                'Tipo Propiedad': property_type,
-                'Superficie Total': surface_total,
-                'Superficie Cubierta': surface_covered,
-                'Ambientes': rooms,
-                'Dormitorios': bedrooms,
-                'Baños': bathrooms
-            }
-            st.dataframe(pd.DataFrame([display_data]).T.rename(columns={0: 'Valor'}))
+        # Detalles adicionales
+        with st.expander("ℹ️ Ver detalles de la entrada"):
+            st.dataframe(input_data, hide_index=True)
+            st.caption(f"Modelo utilizado: {selected_model_name}")
 
     except Exception as e:
-        st.error(f"Error durante la predicción: {e}")
-        st.error("Verifica que las features de la app coincidan con las del entrenamiento.")
-        
+        st.error("Error al realizar la predicción")
+        st.write(e)
+        st.warning("""
+        **Posible causa:** Las características ingresadas no coinciden exactamente con las que el modelo espera.
+        Revisa si faltan columnas (ej. 'location') que se usaron durante el entrenamiento.
+        """)
+
 else:
-    st.info("Por favor, ingrese los datos en la barra lateral y presione 'Predecir Precio'.")
+    st.info("Configura las características de la propiedad en el menú lateral para obtener una estimación.")
