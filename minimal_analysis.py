@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """
-Script de Entrenamiento y Evaluación Robusta (v4 - Reportes Unificados).
+Script de Entrenamiento y Evaluación Robusta
 
 - Lee datos limpios desde la tabla 'input_data' de SQLite.
-- Implementa un pipeline de preprocesamiento (ColumnTransformer).
+- Implementa un pipeline de preprocesamiento (ColumnTransformer) que
+  utiliza TargetEncoder para variables de alta cardinalidad (province, department).
 - Evalúa 2 algoritmos de regresión usando validación cruzada 5-fold.
-- Genera TODOS los reportes en /reports:
-    - model_comparison.png (Gráfico 2x2 general)
-    - feature_importance.png (Top 20 features del mejor modelo)
-    - analysis_report.md (Resumen ejecutivo)
-    - model_comparison.csv (Tabla detallada de métricas)
-    - data_exploration.json (Metadatos del dataset)
+- Genera TODOS los reportes en /reports.
 - Guarda pipelines entrenados en /models.
 """
 
@@ -36,7 +32,7 @@ from sklearn.model_selection import train_test_split, cross_validate
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, TargetEncoder
 from sklearn.svm import SVR
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
@@ -65,25 +61,57 @@ def load_data_from_db(db_manager):
         return None
 
 def create_preprocessor(X_train):
-    logger.info("Creando pipeline de preprocesamiento...")
+    """
+    Crea el pipeline de preprocesamiento (ColumnTransformer).
+    Utiliza TargetEncoder para variables de alta cardinalidad.
+    """
+    logger.info("Creando pipeline de preprocesamiento (con Target Encoding)...")
+    
+    # --- Identificación de Features ---
     non_feature_cols = ['id','property_id', 'location', 'state_name', 'raw_data', 'created_at']
+    
+    # 1. Features Numéricas
     numeric_features = [col for col in X_train.select_dtypes(include=np.number).columns if col not in non_feature_cols]
-    categorical_features = [col for col in X_train.select_dtypes(include=['object', 'category']).columns if col not in non_feature_cols]
+    
+    # 2. Features Categóricas (Separadas por cardinalidad)
+    all_categorical = [col for col in X_train.select_dtypes(include=['object', 'category']).columns if col not in non_feature_cols]
+    
+    # Columnas que explotan con OHE (alta cardinalidad)
+    high_cardinality_features = ['province', 'department']
+    
+    # Columnas que están bien con OHE (baja cardinalidad)
+    low_cardinality_features = [col for col in all_categorical if col not in high_cardinality_features]
 
+    logger.info(f"Features Numéricas: {numeric_features}")
+    logger.info(f"Features Categóricas (Baja Card): {low_cardinality_features}")
+    logger.info(f"Features Categóricas (Alta Card): {high_cardinality_features}")
+
+    # --- Pipelines de Transformación ---
     numeric_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='median')),
         ('scaler', StandardScaler())
     ])
-    categorical_transformer = Pipeline(steps=[
+    
+    # Pipeline para BAJA cardinalidad (OHE)
+    low_cardinality_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='most_frequent')),
         ('onehot', OneHotEncoder(handle_unknown='ignore'))
     ])
+
+    # Pipeline para ALTA cardinalidad (TargetEncoder)
+    high_cardinality_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='constant', fill_value='Desconocido')),
+        ('target_encoder', TargetEncoder(target_type='continuous'))
+    ])
+
+    # --- Ensamblaje ---
     preprocessor = ColumnTransformer(
         transformers=[
             ('num', numeric_transformer, numeric_features),
-            ('cat', categorical_transformer, categorical_features)
+            ('cat_low', low_cardinality_transformer, low_cardinality_features),
+            ('cat_high', high_cardinality_transformer, high_cardinality_features)
         ],
-        remainder='drop'
+        remainder='drop' 
     )
     return preprocessor
 
@@ -92,11 +120,18 @@ def get_feature_importance(pipeline):
         feature_names = pipeline.named_steps['preprocessor'].get_feature_names_out()
         model = pipeline.named_steps['model']
         if hasattr(model, 'feature_importances_'):
-            return dict(zip(feature_names, model.feature_importances_))
-        if hasattr(model, 'coef_'):
-            return dict(zip(feature_names, model.coef_))
-        return None
-    except Exception:
+            importances = model.feature_importances_
+        elif hasattr(model, 'coef_'):
+            importances = np.abs(model.coef_) # Usar valor absoluto para regresión
+        else:
+            return None
+        
+        # Limpiar nombres (TargetEncoder añade 'cat_high__')
+        clean_names = [name.split('__')[-1] for name in feature_names]
+        return dict(zip(clean_names, importances))
+        
+    except Exception as e:
+        logger.warning(f"No se pudo extraer feature importance: {e}")
         return None
 
 # =========================================
@@ -107,7 +142,7 @@ def train_models(X_train, X_test, y_train, y_test, preprocessor, db_manager):
     # Lista de modelos a evaluar
     models = {
         'Linear Regression': LinearRegression(),
-        'Random Forest': RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1, max_depth=15)
+        'Ridge': Ridge(alpha=1.0, random_state=42)
     }
     
     scoring_metrics = {'r2': 'r2', 'mae': 'neg_mean_absolute_error', 'rmse': 'neg_root_mean_squared_error'}
@@ -130,12 +165,30 @@ def train_models(X_train, X_test, y_train, y_test, preprocessor, db_manager):
 
             # 2. Re-entrenamiento final
             logger.info(f"   Re-entrenando en todo el train set...")
-            full_pipeline.fit(X_train, y_train)
+            full_pipeline.fit(X_train, y_train) 
             y_pred_test = full_pipeline.predict(X_test)
             feat_importance = get_feature_importance(full_pipeline)
 
-            # 3. Guardar resultados
-            db_manager.store_model_results(name, "1.0_cv5", mean_metrics, model.get_params(), feat_importance)
+            # 3. Guardar resultados y configuración (en tablas separadas)
+            
+            # 3.1. Guardar MÉTRICAS en model_results
+            db_manager.store_model_results(
+                model_name=name,
+                model_version="1.0_cv5_target_enc", # Nueva versión
+                metrics=mean_metrics,
+                hyperparameters=model.get_params(),
+                feature_importance=feat_importance
+            )
+            
+            # 3.2. Guardar CONFIGURACIÓN en model_config
+            db_manager.store_model_config(
+                model_name=name,
+                config_name=f"config_v_1.0_cv5_target_enc",
+                parameters=model.get_params(),
+                preprocessing_steps={"strategy": "TargetEncoder for High Cardinality"},
+                feature_engineering=None
+            )
+            
             results[name] = {
                 'fitted_pipeline': full_pipeline,
                 'cv_metrics': mean_metrics,
@@ -185,19 +238,25 @@ def generate_all_reports(df, results, X_test, y_test):
     comparison_df.to_csv(os.path.join(reports_dir, 'model_comparison.csv'), index=False)
 
     # --- 3. Markdown de Reporte ---
-    best_model_name = comparison_df.iloc[0]['model']
-    best_metrics = results[best_model_name]['cv_metrics']
-    md_content = f"""# Reporte de Análisis Predictivo
+    best_model_name = ""
+    if not comparison_df.empty:
+        best_model_name = comparison_df.iloc[0]['model']
+        best_metrics = results[best_model_name]['cv_metrics']
+        md_content = f"""# Reporte de Análisis Predictivo (v5.1 - Target Enc)
 ## Resumen
 - **Dataset:** {df.shape[0]} muestras.
 - **Mejor Modelo:** {best_model_name} (R² CV: {best_metrics['cv_r2']:.4f})
+- **Estrategia de Encoding:** TargetEncoder para alta cardinalidad.
 
 ## Comparativa (5-Fold CV)
 | Modelo | R² | RMSE | MAE |
 |---|---|---|---|
 """
-    for _, row in comparison_df.iterrows():
-        md_content += f"| {row['model']} | {row['cv_r2']:.4f} | {row['cv_rmse']:.0f} | {row['cv_mae']:.0f} |\n"
+        for _, row in comparison_df.iterrows():
+            md_content += f"| {row['model']} | {row['cv_r2']:.4f} | {row['cv_rmse']:.0f} | {row['cv_mae']:.0f} |\n"
+    else:
+        md_content = "# Reporte de Análisis Predictivo\n\nNo se pudieron entrenar modelos."
+        
     with open(os.path.join(reports_dir, 'analysis_report.md'), 'w', encoding='utf-8') as f:
         f.write(md_content)
 
@@ -215,35 +274,46 @@ def generate_all_reports(df, results, X_test, y_test):
     axes[0,1].set_title('Precio vs Superficie (Muestra)')
     
     # 4.3 Comparativa R2
-    sns.barplot(data=comparison_df, x='cv_r2', y='model', palette='viridis', ax=axes[1,0])
-    axes[1,0].set_title('Comparativa de Modelos (R² CV)')
-    axes[1,0].set_xlabel('R² Promedio')
+    if not comparison_df.empty:
+        sns.barplot(data=comparison_df, x='cv_r2', y='model', palette='viridis', ax=axes[1,0])
+        axes[1,0].set_title('Comparativa de Modelos (R² CV)')
+        axes[1,0].set_xlabel('R² Promedio')
+    else:
+        axes[1,0].text(0.5, 0.5, 'No hay datos de modelos', horizontalalignment='center', verticalalignment='center', transform=axes[1,0].transAxes)
     
     # 4.4 Predicciones vs Reales (Mejor Modelo)
-    y_pred_best = results[best_model_name]['test_predictions']
-    sns.scatterplot(x=y_test, y=y_pred_best, alpha=0.3, color='purple', ax=axes[1,1])
-    axes[1,1].plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
-    axes[1,1].set_title(f'Predicciones vs Reales ({best_model_name})')
-    axes[1,1].set_xlabel('Real')
-    axes[1,1].set_ylabel('Predicho')
+    if best_model_name and best_model_name in results:
+        y_pred_best = results[best_model_name]['test_predictions']
+        sns.scatterplot(x=y_test, y=y_pred_best, alpha=0.3, color='purple', ax=axes[1,1])
+        axes[1,1].plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
+        axes[1,1].set_title(f'Predicciones vs Reales ({best_model_name})')
+        axes[1,1].set_xlabel('Real')
+        axes[1,1].set_ylabel('Predicho')
+    else:
+        axes[1,1].text(0.5, 0.5, 'No hay predicciones del mejor modelo', horizontalalignment='center', verticalalignment='center', transform=axes[1,1].transAxes)
+
     
     plt.tight_layout()
     plt.savefig(os.path.join(reports_dir, 'model_comparison.png'), dpi=300)
     plt.close()
 
     # --- 5. PNG: feature_importance.png (Mejor Modelo) ---
-    best_fi = results[best_model_name].get('feature_importance')
-    if best_fi and isinstance(best_fi, dict):
-        logger.info(f"Generando feature importance para {best_model_name}...")
-        fi_df = pd.DataFrame(list(best_fi.items()), columns=['Feature', 'Importance'])
-        fi_df = fi_df.sort_values(by='Importance', ascending=False).head(20)
-        
-        plt.figure(figsize=(10, 8))
-        sns.barplot(data=fi_df, x='Importance', y='Feature', palette='magma')
-        plt.title(f'Top 20 Features - {best_model_name}')
-        plt.tight_layout()
-        plt.savefig(os.path.join(reports_dir, 'feature_importance.png'), dpi=300)
-        plt.close()
+    if best_model_name and best_model_name in results:
+        best_fi = results[best_model_name].get('feature_importance')
+        if best_fi and isinstance(best_fi, dict):
+            logger.info(f"Generando feature importance para {best_model_name}...")
+            fi_df = pd.DataFrame(list(best_fi.items()), columns=['Feature', 'Importance'])
+            # Agrupar features que fueron OHE (ej. property_type_Casa, property_type_Depto)
+            fi_df['Feature_Group'] = fi_df['Feature'].apply(lambda x: x.split('_')[0])
+            fi_grouped = fi_df.groupby('Feature_Group')['Importance'].sum().reset_index()
+            fi_grouped = fi_grouped.sort_values(by='Importance', ascending=False).head(20)
+            
+            plt.figure(figsize=(10, 8))
+            sns.barplot(data=fi_grouped, x='Importance', y='Feature_Group', palette='magma')
+            plt.title(f'Top 20 Features - {best_model_name}')
+            plt.tight_layout()
+            plt.savefig(os.path.join(reports_dir, 'feature_importance.png'), dpi=300)
+            plt.close()
 
     logger.info("Todos los reportes han sido generados en /reports")
 
@@ -252,30 +322,40 @@ def generate_all_reports(df, results, X_test, y_test):
 # =========================================
 
 def main():
-    logger.info("=== INICIANDO PIPELINE FINAL (v4) ===")
+    logger.info("=== INICIANDO PIPELINE FINAL (v5.2 - Fix DB Call) ===")
     db_manager = DatabaseManager()
     df = load_data_from_db(db_manager)
     if df is None: return
 
     target_col = 'price_usd'
     df = df.dropna(subset=[target_col])
+    
+    # 'errors='ignore'' es clave si alguna de estas ya fue dropeada
     X = df.drop(columns=[target_col, 'id', 'property_id', 'created_at', 'raw_data'], errors='ignore')
     y = df[target_col]
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # El preprocesador ahora se define solo con X_train, 
+    # pero se fitteará con 'y_train' dentro del pipeline
     preprocessor = create_preprocessor(X_train)
     
     results = train_models(X_train, X_test, y_train, y_test, preprocessor, db_manager)
-    if not results: return
+    if not results: 
+        logger.warning("No se entrenó ningún modelo. Saliendo.")
+        # Aun así, generar reportes vacíos/parciales
+        generate_all_reports(df, results, X_test, y_test)
+        return
 
+    # Guardar pipelines entrenados
+    os.makedirs('models', exist_ok=True)
     # Guardar el preprocesador
     joblib.dump(preprocessor, 'models/preprocessor.joblib')
     logger.info("Pipeline de preprocesamiento guardado en 'models/preprocessor.joblib'")
     
-    # Guardar pipelines entrenados
-    os.makedirs('models', exist_ok=True)
     for name, data in results.items():
         safe_name = name.lower().replace(' ', '_')
+        # Guardar el pipeline completo (preprocessor + model)
         joblib.dump(data['fitted_pipeline'], f'models/{safe_name}_pipeline.joblib')
 
     # Generar TODOS los reportes

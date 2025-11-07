@@ -41,6 +41,7 @@ reports/*.png
 reports/*.csv
 reports/*.json
 reports/*.log
+reports/*.md
 
 # IDE
 .vscode/

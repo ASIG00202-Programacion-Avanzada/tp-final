@@ -6,8 +6,16 @@ import sys
 from pathlib import Path
 
 # --- Configuración del Path ---
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.append(str(PROJECT_ROOT))
+
+# Importar el DatabaseManager
+try:
+    from src.database import DatabaseManager
+except ImportError:
+    st.error("Error: No se pudo encontrar 'src.database.DatabaseManager'. Asegúrate de que el path sea correcto.")
+    st.stop()
+
 
 # --- Configuración de la Página ---
 st.set_page_config(
@@ -16,12 +24,12 @@ st.set_page_config(
     layout="centered"
 )
 
-# --- Carga Dinámica de Modelos ---
+# --- Carga de Recursos (Caché) ---
+
 @st.cache_resource
 def load_models_dynamic():
     """
-    Explora la carpeta 'models/' y carga todos los pipelines disponibles
-    automáticamente, sin importar cuántos sean.
+    Explora la carpeta 'models/' y carga todos los pipelines disponibles.
     """
     models_dir = Path('models')
     if not models_dir.exists():
@@ -29,17 +37,11 @@ def load_models_dynamic():
         return None
 
     models = {}
-    # Buscamos todos los archivos que terminen en _pipeline.joblib
     for model_file in models_dir.glob('*_pipeline.joblib'):
         try:
-            # Convierte los nombres de archivos a nombre legible
-            # Ej: 'linear_regression_pipeline.joblib' -> 'Linear Regression'
             model_name = model_file.stem.replace('_pipeline', '').replace('_', ' ').title()
-            
-            # Cargar el pipeline completo
             models[model_name] = joblib.load(model_file)
             print(f"Modelo cargado: {model_name}")
-            
         except Exception as e:
             st.warning(f"No se pudo cargar {model_file.name}: {e}")
 
@@ -49,8 +51,29 @@ def load_models_dynamic():
     
     return models
 
-# Cargar modelos al iniciar la app
+@st.cache_data
+def load_geo_data():
+    """
+    Carga las combinaciones únicas de provincia y departamento desde la DB.
+    """
+    try:
+        db_manager = DatabaseManager()
+        df = db_manager.get_input_data()
+        if df is None or df.empty:
+            st.warning("No se pudieron cargar datos geográficos (tabla 'input_data' vacía). Usando entrada manual.")
+            return pd.DataFrame(columns=['province', 'department'])
+        
+        # Obtener combinaciones únicas y ordenarlas
+        geo_data = df[['province', 'department']].drop_duplicates().sort_values(by=['province', 'department'])
+        return geo_data
+    except Exception as e:
+        st.error(f"Error al conectar con la DB para cargar geodatos: {e}")
+        return pd.DataFrame(columns=['province', 'department']) # Fallback
+
+# --- Cargar modelos y datos al iniciar ---
 models_loaded = load_models_dynamic()
+geo_df = load_geo_data()
+
 if models_loaded is None:
     st.stop()
 
@@ -63,7 +86,6 @@ st.markdown("---")
 with st.sidebar:
     st.header("🛠️ Configuración")
     
-    # Selector dinámico basado en los modelos encontrados
     selected_model_name = st.selectbox(
         "Selecciona el Modelo Predictivo",
         options=sorted(list(models_loaded.keys()))
@@ -72,9 +94,25 @@ with st.sidebar:
     st.markdown("---")
     st.header("📋 Características de la Propiedad")
     
-    operation_type = st.selectbox("Operación", ['Venta', 'Alquiler', 'Alquiler temporal'])
+    operation_type = st.selectbox("Operación", ['Venta', 'Alquiler'])
     property_type = st.selectbox("Tipo de Propiedad", ['Departamento', 'Casa', 'PH', 'Local comercial', 'Oficina', 'Lote'])
     
+    # --- Filtros Geográficos Dinámicos ---
+    use_text_fallback = geo_df.empty
+    
+    if use_text_fallback:
+        st.caption("Modo de entrada manual (no se cargaron datos de la DB)")
+        selected_province = st.text_input("Provincia", "Capital Federal")
+        selected_department = st.text_input("Localidad / Barrio", "Palermo")
+    else:
+        provinces_list = geo_df['province'].unique().tolist()
+        selected_province = st.selectbox("Provincia", options=provinces_list)
+        
+        # Filtrar departamentos basados en la provincia seleccionada
+        departments_list = geo_df[geo_df['province'] == selected_province]['department'].unique().tolist()
+        selected_department = st.selectbox("Localidad / Barrio", options=departments_list)
+    # --- Fin Filtros Geográficos ---
+
     col1, col2 = st.columns(2)
     with col1:
         surface_total = st.number_input("Sup. Total (m²)", min_value=10, value=70, step=5)
@@ -96,6 +134,8 @@ if predict_btn:
     input_data = pd.DataFrame([{
         'operation_type': operation_type,
         'property_type': property_type,
+        'province': selected_province,
+        'department': selected_department,
         'surface_total': float(surface_total),
         'surface_covered': float(surface_covered),
         'rooms': int(rooms),
@@ -123,10 +163,11 @@ if predict_btn:
 
     except Exception as e:
         st.error("Error al realizar la predicción")
-        st.write(e)
-        st.warning("""
+        st.exception(e) # st.exception es mejor para debugging (check sergio)
+        st.warning(f"""
         **Posible causa:** Las características ingresadas no coinciden exactamente con las que el modelo espera.
-        Revisa si faltan columnas (ej. 'location') que se usaron durante el entrenamiento.
+        Asegúrate de que el DataFrame de entrada tenga todas estas columnas: 
+        `{input_data.columns.tolist()}`
         """)
 
 else:
