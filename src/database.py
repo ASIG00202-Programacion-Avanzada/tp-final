@@ -33,7 +33,8 @@ class InputData(Base):
     property_id = Column(String(50), unique=True)
     property_type = Column(String(50))
     operation_type = Column(String(50))
-    location = Column(String(100))
+    province = Column(String(100))
+    department = Column(String(100))
     surface_total = Column(Float)
     surface_covered = Column(Float)
     rooms = Column(Integer)
@@ -128,7 +129,8 @@ class DatabaseManager:
                     property_id=str(row.get('property_id', '')),
                     property_type=safe_cast(row.get('property_type'), str, ''),
                     operation_type=safe_cast(row.get('operation_type'), str, ''),
-                    location=safe_cast(row.get('location'), str, ''),
+                    province=safe_cast(row.get('province'), str, ''),
+                    department=safe_cast(row.get('department'), str, ''),
                     surface_total=safe_cast(row.get('surface_total'), float, None),
                     surface_covered=safe_cast(row.get('surface_covered'), float, None),
                     rooms=safe_cast(row.get('rooms'), int, None),

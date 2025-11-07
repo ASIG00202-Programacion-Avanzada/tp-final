@@ -57,6 +57,10 @@ class DataProcessor:
         """
         df_clean = df.copy()
 
+        #Se dejan solo datos de Argentina
+        valid_ops = ['Argentina']
+        df_clean = df_clean[df_clean['l1'].isin(valid_ops)]
+
         if 'operation_type' in df_clean.columns:
             valid_ops = ['Venta', 'Alquiler']
             df_clean = df_clean[df_clean['operation_type'].isin(valid_ops)]
@@ -87,7 +91,7 @@ class DataProcessor:
         df_clean = df_clean[df_clean['surface_total'] < 2000]
         
         # Limpiar columnas de texto
-        text_columns = ['property_type', 'location', 'state_name', 'operation_type']
+        text_columns = ['property_type', 'l2','l3', 'state_name', 'operation_type']
         for col in text_columns:
             if col in df_clean.columns:
                 df_clean[col] = df_clean[col].astype(str).str.strip().str.title()
@@ -118,9 +122,8 @@ class DataProcessor:
             df_features['room_density'] = df_features['room_density'].replace([np.inf, -np.inf], np.nan)
         
         # Extraer información de ubicación
-        if 'location' in df_features.columns:
-            df_features['city'] = df_features['location'].str.split(',').str[0].str.strip()
-            df_features['province'] = df_features['location'].str.split(',').str[-1].str.strip()
+        df_features['province'] = df_features['l2']
+        df_features['department'] = df_features['l3']
         
         
         # Crear categorías de superficie
