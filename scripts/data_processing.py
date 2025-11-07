@@ -68,10 +68,6 @@ class DataProcessor:
         if 'price' in df_clean.columns and 'price_usd' not in df_clean.columns:
             df_clean.rename(columns={'price': 'price_usd'}, inplace=True)
 
-        # Eliminar duplicados
-        initial_shape = df_clean.shape[0]
-        df_clean = df_clean.drop_duplicates(subset=['property_id'])
-        logger.info(f"Eliminados {initial_shape - df_clean.shape[0]} duplicados")
         
         # Eliminar filas con valores nulos en columnas críticas
         critical_columns = ['price_usd', 'surface_total']
