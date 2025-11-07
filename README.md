@@ -241,7 +241,7 @@ Editar `src/models.py` para:
 - `download_data.py`: Descarga automática del dataset
 - `setup_db.py`: Configuración de base de datos e inicialización
 - `main_pipeline.py`: Pipeline completo automatizado
-- `test_dataset.py`: Analisis inicial del estado del dataset
+- `tests\test_dataset.py`: Analisis inicial del estado del dataset
 - `tests\test_models.py`: Tests unitarios para el módulo de modelos 
 
 ---
