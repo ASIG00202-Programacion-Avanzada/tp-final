@@ -242,11 +242,11 @@ Editar `src/models.py` para:
 ---
 ## Equipo
 
-Blanco Ariel Pablo
-Castiñeiras Damian
-Guerra Aurora
-Risposi Sergio
-Viezzoli Tiago
+**Blanco Ariel Pablo**
+**Castiñeiras Damian**
+**Guerra Aurora**
+**Risposi Sergio**
+**Viezzoli Tiago**
 
 ## Profesor
 
