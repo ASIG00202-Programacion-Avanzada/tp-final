@@ -240,6 +240,13 @@ Editar `src/models.py` para:
 - `tests\test_models.py`: Tests unitarios para el módulo de modelos 
 
 ---
+## Equipo
+
+Blanco Ariel Pablo
+Castiñeiras Damian
+Guerra Aurora
+Risposi Sergio
+Viezzoli Tiago
 
 ## Profesor
 
